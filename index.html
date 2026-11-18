@@ -1,0 +1,210 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VANTA EAX STUDIO</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:15px;background:#aeb8c2;font-family:Tahoma,Arial;color:#263747}
+.app{max-width:520px;margin:auto;background:linear-gradient(#f5f6f7,#c6cdd3);border:2px solid #778794;padding:14px;box-shadow:0 5px 18px #68747e}
+.header{padding:16px;background:linear-gradient(#e8edf1,#b6c1ca);border:1px solid #82919d;font-size:20px;font-weight:bold;letter-spacing:2px;color:#244563}
+.blue{height:7px;background:#23699e;margin:12px 0}
+.tabs{display:flex;gap:4px;flex-wrap:wrap}
+.tab{padding:9px;background:#d4dbe0;border:1px solid #8997a2;font-size:12px}
+.selected{background:#286da4;color:white}
+.panel{margin-top:13px;padding:15px;background:linear-gradient(#f1f3f5,#d6dce1);border:1px solid #929da7}
+h3{font-size:14px;color:#285273;margin:0 0 14px}
+button{padding:12px;border:1px solid #748594;background:linear-gradient(#fff,#bbc6cf);color:#213e57;font-weight:bold}
+.main{width:100%;background:linear-gradient(#438cc3,#205783);color:white;border-color:#17466b;font-size:16px}
+input[type=range]{width:100%;accent-color:#286da4}
+label{display:block;font-size:13px;margin:15px 0 6px}
+.upload{width:100%;margin-bottom:10px}
+input[type=file]{display:none}
+.track{padding:10px;background:#e9edf0;border:1px solid #aab4bc;font-size:12px;overflow-wrap:anywhere}
+.status{text-align:center;font-size:12px;margin-top:12px}
+audio{width:100%;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="app">
+ <div class="header">CREATIVE EAX CONSOLE</div>
+ <div class="blue"></div>
+ <div class="tabs">
+  <div class="tab selected">EAX EFFECTS</div>
+  <div class="tab">KARAOKE</div>
+  <div class="tab">CMSS 3D</div>
+  <div class="tab">CLEAN-UP</div>
+ </div>
+
+ <div class="panel">
+  <h3>AUDIO SOURCE</h3>
+  <button class="upload" onclick="document.getElementById('music').click()">＋ ADD MUSIC</button>
+  <input id="music" type="file" accept="audio/*">
+  <div class="track" id="filename">No music selected</div>
+  <audio id="player" controls></audio>
+ </div>
+
+ <div class="panel">
+  <h3>MICROPHONE</h3>
+  <div class="track" id="micStatus">Microphone not started</div>
+  <label>MIC LEVEL</label>
+  <input id="micLevel" type="range" min="0" max="150" value="80">
+  <label>MUSIC LEVEL</label>
+  <input id="musicLevel" type="range" min="0" max="100" value="60">
+ </div>
+
+ <div class="panel">
+  <h3>REVERB EFFECT</h3>
+  <label>REVERB POWER: <span id="reverbValue">300%</span></label>
+  <input id="reverb" type="range" min="0" max="300" value="300">
+  <button class="main" id="enable" style="margin-top:18px">ENABLE EFFECT</button>
+  <div class="status" id="status">VANTA READY</div>
+ </div>
+</div>
+
+<script>
+let ctx, micStream, micSource, micGain;
+let musicSource, musicGain, convolver, wet, dry, master, limiter;
+let enabled=false;
+const player=document.getElementById("player");
+
+function makeImpulse(){
+ const length=ctx.sampleRate*3;
+ const buffer=ctx.createBuffer(2,length,ctx.sampleRate);
+ for(let c=0;c<2;c++){
+  const data=buffer.getChannelData(c);
+  for(let i=0;i<length;i++){
+   data[i]=(Math.random()*2-1)*Math.pow(1-i/length,2);
+  }
+ }
+ return buffer;
+}
+
+function makeChannel(source){
+ const input=ctx.createGain();
+ source.connect(input);
+ input.connect(dry);
+ input.connect(convolver);
+ return input;
+}
+
+function update(){
+ if(!ctx)return;
+ wet.gain.setTargetAtTime(
+  Number(document.getElementById("reverb").value)/100,
+  ctx.currentTime,.05
+ );
+ document.getElementById("reverbValue").textContent=
+  document.getElementById("reverb").value+"%";
+
+ if(micGain)micGain.gain.value=
+  Number(document.getElementById("micLevel").value)/100;
+
+ if(musicGain)musicGain.gain.value=
+  Number(document.getElementById("musicLevel").value)/100;
+}
+
+async function setup(){
+ if(ctx)return;
+ ctx=new AudioContext();
+
+ convolver=ctx.createConvolver();
+ convolver.buffer=makeImpulse();
+
+ dry=ctx.createGain();
+ wet=ctx.createGain();
+ master=ctx.createGain();
+ limiter=ctx.createDynamicsCompressor();
+
+ limiter.threshold.value=-8;
+ limiter.ratio.value=10;
+ limiter.attack.value=.005;
+ limiter.release.value=.2;
+
+ dry.connect(master);
+ convolver.connect(wet);
+ wet.connect(master);
+ master.connect(limiter);
+ limiter.connect(ctx.destination);
+
+ if(player.src){
+  musicSource=ctx.createMediaElementSource(player);
+  musicGain=makeChannel(musicSource);
+ }
+ update();
+}
+
+async function start(){
+ await setup();
+ await ctx.resume();
+
+ if(!micStream){
+  micStream=await navigator.mediaDevices.getUserMedia({
+   audio:{
+    echoCancellation:false,
+    noiseSuppression:false,
+    autoGainControl:false
+   }
+  });
+
+  micSource=ctx.createMediaStreamSource(micStream);
+  micGain=makeChannel(micSource);
+ }
+
+ update();
+ if(player.src)await player.play();
+
+ enabled=true;
+ document.getElementById("enable").textContent="DISABLE EFFECT";
+ document.getElementById("status").textContent="MIC + MUSIC EFFECT ACTIVE";
+ document.getElementById("micStatus").textContent="Microphone connected";
+}
+
+function stop(){
+ if(micStream)micStream.getTracks().forEach(t=>t.stop());
+ micStream=null;
+ micSource=null;
+ micGain=null;
+ player.pause();
+ enabled=false;
+ if(wet)wet.gain.setTargetAtTime(0,ctx.currentTime,.05);
+ document.getElementById("enable").textContent="ENABLE EFFECT";
+ document.getElementById("status").textContent="EFFECT DISABLED";
+ document.getElementById("micStatus").textContent="Microphone stopped";
+}
+
+document.getElementById("enable").onclick=async()=>{
+ try{
+  if(enabled)stop();
+  else await start();
+ }catch(error){
+  document.getElementById("status").textContent="ERROR: "+error.message;
+ }
+};
+
+document.getElementById("music").onchange=async e=>{
+ const file=e.target.files[0];
+ if(!file)return;
+ player.src=URL.createObjectURL(file);
+ document.getElementById("filename").textContent=file.name;
+
+ if(ctx){
+  if(musicSource){
+   musicSource.disconnect();
+   musicGain.disconnect();
+  }
+  musicSource=ctx.createMediaElementSource(player);
+  musicGain=makeChannel(musicSource);
+  update();
+ }
+ if(enabled)await player.play();
+};
+
+["reverb","micLevel","musicLevel"].forEach(id=>{
+ document.getElementById(id).addEventListener("input",update);
+});
+</script>
+</body>
+</html>
